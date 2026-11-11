@@ -24,6 +24,14 @@ public sealed class NativeSettings
         get { using var key = Registry.CurrentUser.OpenSubKey(Key); return key?.GetValue("AutomaticallyCheckUpdates") is not int number || number != 0; }
         set { using var key = Registry.CurrentUser.CreateSubKey(Key); key.SetValue("AutomaticallyCheckUpdates", value ? 1 : 0); }
     }
+    public string AccountSort {
+        get { using var key = Registry.CurrentUser.OpenSubKey(Key); return key?.GetValue("AccountSort") as string ?? "added"; }
+        set { using var key = Registry.CurrentUser.CreateSubKey(Key); key.SetValue("AccountSort", value); Changed?.Invoke(); }
+    }
+    public bool AutomaticSwitch {
+        get { using var key = Registry.CurrentUser.OpenSubKey(Key); return key?.GetValue("AutomaticSwitch") is int number && number == 1; }
+        set { using var key = Registry.CurrentUser.CreateSubKey(Key); key.SetValue("AutomaticSwitch", value ? 1 : 0); }
+    }
     public Uri? UpdatePage { get; private set; }
     public bool IsChecking { get; private set; }
     public string? UpdateError { get; private set; }

@@ -112,6 +112,9 @@ public sealed class CoreClient : IAccountClient, IAsyncDisposable
                 case "closeDesktop":
                     await desktop.CloseAsync(lifetime.Token);
                     break;
+                case "requireDesktopClosed":
+                    await desktop.RequireClosedAsync(lifetime.Token);
+                    break;
                 case "reopenDesktop":
                     await desktop.OpenAsync(lifetime.Token);
                     break;

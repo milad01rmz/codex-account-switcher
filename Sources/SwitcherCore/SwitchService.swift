@@ -5,6 +5,13 @@ import Foundation
 public protocol DesktopControlling: Sendable {
     func closeDesktop() async throws
     func reopenDesktop() async throws
+    func requireDesktopClosed() async throws
+}
+
+public extension DesktopControlling {
+    func requireDesktopClosed() async throws {
+        throw CocoaError(.featureUnsupported)
+    }
 }
 
 public protocol CodexIdentityReading: Sendable {
@@ -25,6 +32,10 @@ public struct SwitchService: SwitchServicing {
     }
 
     public func switchAccount(to targetID: UUID) async throws {
+        try await switchAccount(to: targetID, onlyWhenDesktopClosed: false)
+    }
+
+    public func switchAccount(to targetID: UUID, onlyWhenDesktopClosed: Bool) async throws {
         let target: AccountProfile
         let originalActiveID: UUID?
         let originalProfile: AccountProfile?
@@ -53,7 +64,8 @@ public struct SwitchService: SwitchServicing {
         }
 
         do {
-            try await desktop.closeDesktop()
+            if onlyWhenDesktopClosed { try await desktop.requireDesktopClosed() }
+            else { try await desktop.closeDesktop() }
         } catch {
             throw OperationError.stage(.closeDesktop, error)
         }
@@ -70,6 +82,11 @@ public struct SwitchService: SwitchServicing {
             }
         } catch {
             throw OperationError.stage(.saveCurrentCredential, error)
+        }
+
+        if onlyWhenDesktopClosed {
+            do { try await desktop.requireDesktopClosed() }
+            catch { throw OperationError.stage(.closeDesktop, error) }
         }
 
         do {
@@ -101,6 +118,7 @@ public struct SwitchService: SwitchServicing {
             )
         }
 
+        guard !onlyWhenDesktopClosed else { return }
         do {
             try await desktop.reopenDesktop()
         } catch {

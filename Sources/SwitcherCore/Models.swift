@@ -147,12 +147,13 @@ public enum UsageViewState: Equatable, Sendable {
     case loaded(WeeklyUsage)
     case stale(WeeklyUsage, String)
     case unavailable(String)
+    case signInRequired
 
     public var displayedUsage: WeeklyUsage? {
         switch self {
         case let .loaded(usage), let .stale(usage, _):
             usage
-        case .idle, .unavailable:
+        case .idle, .unavailable, .signInRequired:
             nil
         }
     }
@@ -273,6 +274,17 @@ public enum CodexClientError: LocalizedError, Equatable, Sendable {
     case identityUnavailable
     case weeklyUsageUnavailable
     case loginFailed(String)
+
+    var requiresNewSignIn: Bool {
+        guard case let .remoteError(code, message) = self else { return false }
+        if code == 401 { return true }
+        let normalized = message.lowercased()
+        return ["refresh_token_expired", "refresh_token_reused", "refresh_token_invalidated",
+                "refresh token has expired", "refresh token was already used", "refresh token was revoked",
+                "please log out and sign in again", "401 unauthorized", "not logged in",
+                "chatgpt authentication required", "chatgpt auth required"]
+            .contains { normalized.contains($0) }
+    }
 
     public var errorDescription: String? {
         switch self {

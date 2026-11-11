@@ -131,6 +131,24 @@ struct AccountControllerTests {
         #expect(try await fixture.store.loadUsageCache().entries.first?.usage.remainingPercent == 72)
     }
 
+    @Test func expiredSessionDropsTheLastGoodUsageAndCache() async throws {
+        let fixture = try ControllerFixture()
+        defer { fixture.clean() }
+        try fixture.writeActiveCredential()
+        await fixture.model.start()
+        fixture.model.refreshWeeklyUsage()
+        await fixture.model.waitForWeeklyUsageRefresh()
+        let id = try #require(fixture.model.activeAccountID)
+        #expect(fixture.model.usageStates[id]?.displayedUsage != nil)
+
+        await fixture.client.expireSession()
+        fixture.model.refreshWeeklyUsage()
+        await fixture.model.waitForWeeklyUsageRefresh()
+        #expect(fixture.model.usageStates[id] == .signInRequired)
+        #expect(fixture.model.usageStates[id]?.displayedUsage == nil)
+        #expect(try await fixture.store.loadUsageCache().entries.isEmpty)
+    }
+
     @Test func settingsAreSavedImmediately() async throws {
         let fixture = try ControllerFixture()
         defer { fixture.clean() }
@@ -314,6 +332,7 @@ private struct ControllerFixture {
 private actor FixtureClient: AccountClient {
     private(set) var identityReads = 0
     private var usageFails = false
+    private var sessionExpired = false
     private var resetExpiry: Date?
     private var consumedHomes: Set<URL> = []
     private var resetFails = false
@@ -330,12 +349,16 @@ private actor FixtureClient: AccountClient {
         return .reset
     }
     func failUsage() { usageFails = true }
+    func expireSession() { sessionExpired = true }
     func setResetExpiry(_ date: Date) { resetExpiry = date }
     func readIdentity(profileHome: URL) async throws -> AccountIdentity {
         identityReads += 1
         return AccountIdentity(accountID: "demo-account", email: "demo@example.test")
     }
     func readWeeklyUsage(profileHome: URL) async throws -> WeeklyUsage {
+        if sessionExpired {
+            throw CodexClientError.remoteError(code: -32603, message: "401 Unauthorized: refresh_token_invalidated")
+        }
         if usageFails { throw CodexClientError.connectionClosed }
         let resetConsumed = consumedHomes.contains(profileHome)
         return WeeklyUsage(

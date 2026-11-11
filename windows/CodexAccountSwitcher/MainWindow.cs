@@ -131,7 +131,7 @@ public sealed class MainWindow : Window
             warning.Children.Add(Button(T("manage"), () => Navigate("manage"), left: true)); body.Children.Add(warning);
         }
         var list = new StackPanel();
-        foreach (var row in State.Accounts) {
+        foreach (var row in OrderedAccounts(manage)) {
             var avatar = new Border { Width = 32, Height = 32, CornerRadius = new CornerRadius(4), Background = B("Hover"),
                 Child = Text(row.Initials, 11, bold: true) };
             ((TextBlock)avatar.Child).HorizontalAlignment = HorizontalAlignment.Center;
@@ -150,8 +150,21 @@ public sealed class MainWindow : Window
                         details.Children.Add(UsageLine(T("five_hour"), five, Reset(time, false)));
                     details.Children.Add(UsageLine(T(State.Settings.ShowsFiveHourUsage ? "weekly" : "usage"), usage.RemainingPercent,
                         State.Settings.ShowsFiveHourUsage ? Reset(usage.ResetsAt) : null));
+                    if (row.UsageStatus == "stale") {
+                        var checkedAt = row.UsageCheckedAt?.ToLocalTime().ToString("g", CultureInfo.CurrentCulture);
+                        details.Children.Add(Text(T("usage_cached") + (checkedAt == null ? "" : " · " + checkedAt), 10.5, muted: true));
+                    }
                     details.ToolTip = row.UsageError;
-                } else { var missing = Text(row.UsageStatus == "idle" ? T("usage") + " —" : T("usage_unavailable"), 10.5, muted: true); missing.ToolTip = row.UsageError; details.Children.Add(missing); }
+                } else {
+                    var label = row.UsageStatus switch {
+                        "idle" => T("usage") + " —",
+                        "signInRequired" => T("usage_sign_in_required"),
+                        _ => T("usage_unavailable")
+                    };
+                    var missing = Text(label, 10.5, muted: true);
+                    missing.ToolTip = row.UsageError;
+                    details.Children.Add(missing);
+                }
                 var accountInfo = new Grid();
                 accountInfo.ColumnDefinitions.Add(new ColumnDefinition());
                 accountInfo.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
@@ -178,7 +191,7 @@ public sealed class MainWindow : Window
                 AutomationProperties.SetName(action, active ? T("active") : T("remove")); Grid.SetColumn(action, 2); grid.Children.Add(action);
                 list.Children.Add(new Border { Padding = new Thickness(16, 12, 16, 12), Child = grid });
             } else {
-                var button = new Button { Content = grid, Style = (Style)FindResource("AccountRow"), Background = active ? B("Selected") : Brushes.Transparent, IsEnabled = !IsBusy };
+                var button = new Button { Content = grid, Style = (Style)FindResource("AccountRow"), Background = active ? B("Selected") : Brushes.Transparent, IsEnabled = !IsBusy && row.UsageStatus != "signInRequired" };
                 AutomationProperties.SetName(button, title);
                 button.Click += (_, _) => { if (!active) { target = row; page = "switch"; Render(); } };
                 var selection = new Border { Width = 3, Height = 24, Background = active ? B("Accent") : Brushes.Transparent,
@@ -233,6 +246,24 @@ public sealed class MainWindow : Window
         var confirm = Button(T(command), () => { Navigate(command == "remove" ? "manage" : "accounts"); _ = Run(command, id); });
         confirm.Margin = new Thickness(8, 0, 0, 0); confirm.BorderBrush = B("Accent"); confirm.IsDefault = true; buttons.Children.Add(confirm); content.Children.Add(buttons); body.Children.Add(content);
     }
+    private System.Collections.Generic.IEnumerable<AccountRow> OrderedAccounts(bool manage)
+    {
+        if (manage) return State.Accounts;
+        var now = DateTimeOffset.UtcNow;
+        bool IsFresh(AccountRow row) => row.UsageStatus == "loaded" &&
+            row.UsageCheckedAt is { } time && time <= now && now - time < TimeSpan.FromMinutes(5);
+        var order = State.Accounts.OrderByDescending(row => row.Profile.Id == State.ActiveAccountID)
+            .ThenBy(row => IsFresh(row) ? 0 : row.UsageStatus == "signInRequired" ? 2 : 1);
+        return native.AccountSort switch {
+            "fiveHour" => order.ThenByDescending(row => IsFresh(row) && row.Usage is { } usage &&
+                usage.FiveHourResetsAt > now ? usage.FiveHourRemainingPercent : null),
+            "weekly" => order.ThenByDescending(row => IsFresh(row) && row.Usage is { } usage &&
+                usage.ResetsAt > now ? (int?)usage.RemainingPercent : null),
+            "name" => order.ThenBy(row => row.Profile.Email ?? row.Profile.DisplayName, StringComparer.CurrentCultureIgnoreCase),
+            _ => order
+        };
+    }
+
     private void Settings(StackPanel body)
     {
         var settings = new StackPanel { Margin = new Thickness(20, 0, 20, 20) };
@@ -252,11 +283,26 @@ public sealed class MainWindow : Window
         var usageWindowRow = Pair(Text(T("status_bar_usage_window")), usageWindow);
         usageWindowRow.Height = 48; settings.Children.Add(usageWindowRow);
         Toggle(T("show_five_hour_usage"), State.Settings.ShowsFiveHourUsage, value => _ = Run("fiveHour", value: value));
+        var sortModes = new[] { "added", "fiveHour", "weekly", "name" };
+        var sort = new ComboBox { Width = 160, VerticalAlignment = VerticalAlignment.Center,
+            ItemsSource = new[] { T("sort_added"), T("five_hour"), T("weekly"), T("sort_name") },
+            SelectedIndex = Math.Max(0, Array.IndexOf(sortModes, native.AccountSort)) };
+        sort.SelectionChanged += (_, _) => { if (sort.SelectedIndex >= 0) native.AccountSort = sortModes[sort.SelectedIndex]; };
+        var sortRow = Pair(Text(T("account_sort")), sort);
+        sortRow.Height = 48;
+        settings.Children.Add(sortRow);
         var languages = new[] { "system", "english", "simplifiedChinese" };
         var language = new ComboBox { Width = 160, VerticalAlignment = VerticalAlignment.Center, ItemsSource = new[] { T("system_default"), T("english"), T("simplified_chinese") }, SelectedIndex = Array.IndexOf(languages, State.Settings.Language) };
         language.SelectionChanged += (_, _) => { if (language.SelectedIndex >= 0) _ = Run("language", language: languages[language.SelectedIndex]); };
         var languageRow = Pair(Text(T("language")), language); languageRow.Height = 48; settings.Children.Add(languageRow);
         var experimentHeading = Text(T("settings_automation"), 14, bold: true); experimentHeading.Margin = new Thickness(0, 20, 0, 0); settings.Children.Add(experimentHeading);
+        Toggle(T("automatic_switch"), native.AutomaticSwitch, value => {
+            native.AutomaticSwitch = value;
+            _ = Run("automaticSwitch", value: value);
+        });
+        var switchHint = Text(T("automatic_switch_hint"), 10.5, muted: true);
+        switchHint.TextWrapping = TextWrapping.Wrap;
+        settings.Children.Add(switchHint);
         Toggle(T("auto_reset"), State.Settings.AutoResetEnabled, value => _ = Run("autoReset", value: value));
         var experimentHint = Text(T("auto_reset_hint"), 10.5, muted: true); experimentHint.TextWrapping = TextWrapping.Wrap; settings.Children.Add(experimentHint);
         settings.Children.Add(Button(T("open_reset_log"), () => {

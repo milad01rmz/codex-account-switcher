@@ -81,6 +81,10 @@ struct AccountRow: View {
             Text("\(L10n.string("usage", language: language)) -")
                 .font(.system(size: 10.5))
                 .foregroundStyle(.secondary)
+        case .signInRequired:
+            Text(L10n.string("usage_sign_in_required", language: language))
+                .font(.system(size: 10.5))
+                .foregroundStyle(.orange)
         case let .unavailable(message):
             Text(L10n.string("usage_unavailable", language: language))
                 .font(.system(size: 10.5))

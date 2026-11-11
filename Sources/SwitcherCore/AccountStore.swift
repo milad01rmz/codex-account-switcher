@@ -163,6 +163,13 @@ public actor AccountStore: AccountStoring {
         try saveUsageCache(cache)
     }
 
+    public func clearCachedUsage(profileID: UUID) throws {
+        var cache = try loadUsageCache()
+        guard cache.entries.contains(where: { $0.profileID == profileID }) else { return }
+        cache.entries.removeAll { $0.profileID == profileID }
+        try saveUsageCache(cache)
+    }
+
     public func profile(id: UUID) throws -> AccountProfile {
         let registry = try loadRegistry()
         guard let profile = registry.accounts.first(where: { $0.id == id }) else {

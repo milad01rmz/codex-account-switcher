@@ -73,6 +73,7 @@ public partial class App : Application
             };
             client.Changed += RefreshTray;
             await client.InitializeAsync();
+            if (native.AutomaticSwitch) await client.CommandAsync("automaticSwitch", value: true);
             if (!e.Args.Contains("--background")) window.OpenWindow();
             updates = new DispatcherTimer { Interval = TimeSpan.FromHours(1) };
             updates.Tick += async (_, _) => { if (native.AutomaticallyCheckUpdates) await native.CheckUpdatesAsync(); };
@@ -90,15 +91,18 @@ public partial class App : Application
         RefreshTrayIcon();
         var active = client.State.Accounts.FirstOrDefault(row => row.Profile.Id == client.State.ActiveAccountID);
         var percent = ActiveTrayPercent();
-        var label = active == null ? "Codex Account Switcher" : active.Profile.DisplayName + (percent != null ? " · " + percent + "%" : "");
+        var label = active == null ? "Codex Account Switcher" : active.Profile.DisplayName;
+        if (active?.UsageStatus == "signInRequired") label = client.State.Text("usage_sign_in_required");
+        else if (active?.UsageStatus == "stale") label = client.State.Text("usage_cached");
+        else if (percent != null) label += " · " + percent + "%";
         tray.Text = label.Length > 63 ? label[..63] : label;
     }
     private int? ActiveTrayPercent()
     {
         if (client?.State.Settings.ShowsMenuBarPercentage != true) return null;
         var state = client.State;
-        var usage = state.Accounts.FirstOrDefault(row => row.Profile.Id == state.ActiveAccountID)?.Usage;
-        if (usage == null) return null;
+        var row = state.Accounts.FirstOrDefault(row => row.Profile.Id == state.ActiveAccountID);
+        if (row?.UsageStatus != "loaded" || row.Usage is not { } usage) return null;
         return state.Settings.StatusBarUsageWindow == "fiveHour"
             ? usage.FiveHourRemainingPercent ?? usage.RemainingPercent
             : usage.RemainingPercent;

@@ -25,6 +25,28 @@ struct SwitchServiceTests {
         #expect(await fixture.store.restoredProfileIDs().isEmpty)
     }
 
+    @Test func automaticSwitchLeavesOpenDesktopAndCredentialsAlone() async throws {
+        let fixture = SwitchFixture(failure: .closeDesktop)
+        do {
+            try await fixture.service.switchAccount(to: fixture.target.id, onlyWhenDesktopClosed: true)
+            Issue.record("An open Desktop should defer automatic switching.")
+        } catch let error as OperationError {
+            #expect(error.stage == .closeDesktop)
+        }
+        #expect(await fixture.recorder.snapshot().isEmpty)
+        #expect(await fixture.store.credentialOwner() == fixture.original.id)
+        #expect(await fixture.store.activeAccountID() == fixture.original.id)
+    }
+
+    @Test func automaticSwitchDoesNotCloseOrReopenDesktop() async throws {
+        let fixture = SwitchFixture(failure: nil)
+        try await fixture.service.switchAccount(to: fixture.target.id, onlyWhenDesktopClosed: true)
+        #expect(await fixture.recorder.snapshot() == [
+            .saveCurrentCredential, .activateTargetCredential, .verifyTargetIdentity, .commitActiveAccountID,
+        ])
+        #expect(await fixture.store.activeAccountID() == fixture.target.id)
+    }
+
     @Test func stopsAtTheFirstFailedStage() async {
         for stage in SwitchStage.allCases {
             let fixture = SwitchFixture(failure: stage)
@@ -143,6 +165,9 @@ private actor CallRecorder {
 private struct FakeDesktop: DesktopControlling {
     let recorder: CallRecorder
     let failure: SwitchStage?
+    func requireDesktopClosed() async throws {
+        if failure == .closeDesktop { throw InjectedFailure(stage: .closeDesktop) }
+    }
     func closeDesktop() async throws {
         await recorder.append(.closeDesktop)
         if failure == .closeDesktop { throw InjectedFailure(stage: .closeDesktop) }

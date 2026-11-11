@@ -8,6 +8,7 @@ public struct AccountSnapshot: Encodable, Sendable {
         public let usage: WeeklyUsage?
         public let usageError: String?
         public let usageStatus: String
+        public let usageCheckedAt: Date?
         public let subscription: SubscriptionSnapshot?
     }
     public let accounts: [Row]
@@ -28,6 +29,7 @@ extension AccountController {
                     usage: usageStates[account.id]?.displayedUsage,
                     usageError: usageStates[account.id]?.presentationError,
                     usageStatus: usageStates[account.id]?.presentationStatus ?? "idle",
+                    usageCheckedAt: usageCheckedAt[account.id],
                     subscription: subscriptionSnapshots[account.id])
             },
             activeAccountID: activeAccountID, settings: settings,
@@ -41,7 +43,7 @@ extension AccountController {
 
 private extension UsageViewState {
     var presentationStatus: String {
-        switch self { case .idle: "idle"; case .loaded: "loaded"; case .stale: "stale"; case .unavailable: "unavailable" }
+        switch self { case .idle: "idle"; case .loaded: "loaded"; case .stale: "stale"; case .unavailable: "unavailable"; case .signInRequired: "signInRequired" }
     }
     var presentationError: String? {
         switch self { case let .stale(_, error), let .unavailable(error): error; default: nil }

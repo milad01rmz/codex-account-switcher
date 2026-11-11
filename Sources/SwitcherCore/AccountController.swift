@@ -2,7 +2,7 @@ import Foundation
 
 private enum UsageRefreshResult: Sendable {
     case success(UUID, WeeklyUsage)
-    case failure(UUID, String)
+    case failure(UUID, String, signInRequired: Bool)
 }
 
 @MainActor
@@ -17,6 +17,9 @@ open class AccountController {
     public private(set) var isAddingAccount = false { didSet { onChange?() } }
     public var visibleError: OperationError? { didSet { onChange?() } }
     public private(set) var activeIdentityConfirmed = true { didSet { onChange?() } }
+
+    var usageCheckedAt: [UUID: Date] = [:]
+    private var automaticSwitchEnabled = false
 
     private let store: AccountStore
     private let codex: any AccountClient
@@ -91,6 +94,7 @@ open class AccountController {
             await self.performWeeklyUsageRefresh()
             self.usageRefreshTask = nil
             self.scheduleResetExpiryCheck()
+            await self.switchAutomaticallyIfNeeded()
         }
     }
 
@@ -142,14 +146,13 @@ open class AccountController {
 
     private func performWeeklyUsageRefresh() async {
         guard !Task.isCancelled else { return }
+        var canObserveReset = true
         do {
             try await syncActiveIdentity()
         } catch {
             showError(error)
-            for account in accounts {
-                await observeResetExpiry(profile: account, usage: nil, error: error.localizedDescription)
-            }
-            return
+            canObserveReset = false
+            // Profile usage can still be checked when active identity is unconfirmed.
         }
         guard !Task.isCancelled else { return }
         await refreshSubscriptionSnapshots()
@@ -161,7 +164,8 @@ open class AccountController {
                         try Task.checkCancellation()
                         return .success(account.id, try await codex.readWeeklyUsage(profileHome: home))
                     } catch {
-                        return .failure(account.id, error.localizedDescription)
+                        return .failure(account.id, error.localizedDescription,
+                            signInRequired: (error as? CodexClientError)?.requiresNewSignIn == true)
                     }
                 }
             }
@@ -170,23 +174,72 @@ open class AccountController {
                 switch result {
                 case let .success(id, usage):
                     guard let account = accounts.first(where: { $0.id == id }) else { continue }
+                    let checkedAt = Date()
+                    usageCheckedAt[id] = checkedAt
                     usageStates[id] = .loaded(usage)
                     do {
-                        try await store.cacheWeeklyUsage(usage, profileID: id)
+                        try await store.cacheWeeklyUsage(usage, profileID: id, fetchedAt: checkedAt)
                     } catch {
                         showError(error)
                     }
-                    await observeResetExpiry(profile: account, usage: usage)
-                case let .failure(id, message):
+                    if canObserveReset { await observeResetExpiry(profile: account, usage: usage) }
+                case let .failure(id, message, signInRequired):
                     guard let account = accounts.first(where: { $0.id == id }) else { continue }
-                    await observeResetExpiry(profile: account, usage: nil, error: message)
-                    if let cached = usageStates[id]?.displayedUsage {
+                    if canObserveReset { await observeResetExpiry(profile: account, usage: nil, error: message) }
+                    if signInRequired {
+                        usageCheckedAt[id] = nil
+                        usageStates[id] = .signInRequired
+                        do { try await store.clearCachedUsage(profileID: id) }
+                        catch { showError(error) }
+                    } else if usageStates[id] == .signInRequired {
+                        continue
+                    } else if let cached = usageStates[id]?.displayedUsage {
                         usageStates[id] = .stale(cached, message)
                     } else {
                         usageStates[id] = .unavailable(message)
                     }
                 }
             }
+        }
+    }
+
+    public func setAutomaticSwitchEnabled(_ enabled: Bool) {
+        automaticSwitchEnabled = enabled
+        if enabled { refreshWeeklyUsage() }
+    }
+
+    private func switchAutomaticallyIfNeeded() async {
+        guard automaticSwitchEnabled, !isMutating, !isAddingAccount, activeIdentityConfirmed,
+              let active = activeAccountID, let service = switchService as? SwitchService else { return }
+        let now = Date()
+        func capacity(_ id: UUID) -> Int? {
+            guard case let .loaded(usage) = usageStates[id],
+                  let checked = usageCheckedAt[id], checked <= now, now.timeIntervalSince(checked) < 300,
+                  usage.resetsAt > now else { return nil }
+            if let remaining = usage.fiveHourRemainingPercent {
+                guard let reset = usage.fiveHourResetsAt, reset > now else { return nil }
+                return min(remaining, usage.remainingPercent)
+            }
+            return usage.remainingPercent
+        }
+        let activeCapacity = capacity(active)
+        guard usageStates[active] == .signInRequired || (activeCapacity.map { $0 <= 5 } ?? false),
+              let target = accounts.compactMap({ account -> (UUID, Int)? in
+                  guard account.id != active, let remaining = capacity(account.id), remaining > 5 else { return nil }
+                  return (account.id, remaining)
+              }).max(by: { $0.1 < $1.1 })?.0 else { return }
+        isMutating = true
+        defer { isMutating = false }
+        do {
+            try await syncActiveIdentity()
+            guard automaticSwitchEnabled, activeAccountID == active else { return }
+            try await service.switchAccount(to: target, onlyWhenDesktopClosed: true)
+            apply(try await store.loadRegistry())
+            await refreshSubscriptionSnapshots()
+        } catch let error as OperationError where error.stage == .closeDesktop {
+            // An open Desktop defers the automatic handoff until a later refresh.
+        } catch {
+            showError(error)
         }
     }
 
@@ -236,6 +289,7 @@ open class AccountController {
             await self.performAddAccount()
             self.isAddingAccount = false
             self.addAccountTask = nil
+            self.refreshWeeklyUsage()
         }
     }
 
@@ -434,8 +488,10 @@ open class AccountController {
                 try await store.appendResetExpiryLog([ResetExpiryEvent(timestamp: Date(), event: "reset_verified",
                     profileID: profile.id, account: profile.displayName, usage: refreshed,
                     creditID: creditID, expiresAt: expiry, idempotencyKey: key, outcome: result.outcome)])
+                let checkedAt = Date()
+                usageCheckedAt[profile.id] = checkedAt
                 usageStates[profile.id] = .loaded(refreshed)
-                try await store.cacheWeeklyUsage(refreshed, profileID: profile.id)
+                try await store.cacheWeeklyUsage(refreshed, profileID: profile.id, fetchedAt: checkedAt)
             }
         } catch {
             stopAutoReset(error)
@@ -476,6 +532,7 @@ open class AccountController {
     private func apply(_ registry: AccountRegistry) {
         accounts = registry.accounts
         activeAccountID = registry.activeAccountID
+        usageCheckedAt = usageCheckedAt.filter { id, _ in registry.accounts.contains(where: { $0.id == id }) }
         usageStates = usageStates.filter { id, _ in registry.accounts.contains(where: { $0.id == id }) }
         subscriptionSnapshots = subscriptionSnapshots.filter { id, _ in registry.accounts.contains(where: { $0.id == id }) }
     }
@@ -483,7 +540,8 @@ open class AccountController {
     private func apply(_ cache: UsageCache) {
         let validAccountIDs = Set(accounts.map(\.id))
         for entry in cache.entries where validAccountIDs.contains(entry.profileID) {
-            usageStates[entry.profileID] = .loaded(entry.usage)
+            usageCheckedAt[entry.profileID] = entry.fetchedAt
+            usageStates[entry.profileID] = .stale(entry.usage, text("usage_cached"))
         }
     }
 

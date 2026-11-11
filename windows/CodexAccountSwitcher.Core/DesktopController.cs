@@ -99,6 +99,18 @@ public sealed class DesktopController(Func<CancellationToken, Task<DesktopInstal
         return result == ErrorSuccess ? value.ToString() : null;
     }
 
+    public async Task RequireClosedAsync(CancellationToken cancellationToken)
+    {
+        var installation = await discover(cancellationToken);
+        var processes = FindDesktopProcesses(installation);
+        try
+        {
+            if (processes.Count != 0)
+                throw new IOException("Codex Desktop is still running.");
+        }
+        finally { foreach (var process in processes) process.Dispose(); }
+    }
+
     public Task CloseAsync(CancellationToken cancellationToken) => CloseAsync(cancellationToken, TimeSpan.FromSeconds(30));
 
     internal async Task CloseAsync(CancellationToken cancellationToken, TimeSpan exitTimeout)

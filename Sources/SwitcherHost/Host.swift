@@ -13,6 +13,7 @@ private struct Request: Decodable, Sendable {
 private struct DesktopAdapter: DesktopControlling {
     let host: Host
     func closeDesktop() async throws { try await host.platform("closeDesktop") }
+    func requireDesktopClosed() async throws { try await host.platform("requireDesktopClosed") }
     func reopenDesktop() async throws { try await host.platform("reopenDesktop") }
 }
 
@@ -105,6 +106,9 @@ private final class Host {
         case "fiveHour":
             guard let value = request.value else { throw HostError.message("Missing setting.") }
             await model.setShowsFiveHourUsage(value)
+        case "automaticSwitch":
+            guard let enabled = request.value else { throw HostError.message("Missing setting.") }
+            model.setAutomaticSwitchEnabled(enabled)
         case "autoReset":
             guard let value = request.value else { throw HostError.message("Missing setting.") }
             await model.setAutoResetEnabled(value)
