@@ -146,13 +146,14 @@ open class AccountController {
 
     private func performWeeklyUsageRefresh() async {
         guard !Task.isCancelled else { return }
-        var canObserveReset = true
         do {
             try await syncActiveIdentity()
         } catch {
             showError(error)
-            canObserveReset = false
-            // Profile usage can still be checked when active identity is unconfirmed.
+            for account in accounts {
+                await observeResetExpiry(profile: account, usage: nil, error: error.localizedDescription)
+            }
+            return
         }
         guard !Task.isCancelled else { return }
         await refreshSubscriptionSnapshots()
@@ -182,10 +183,10 @@ open class AccountController {
                     } catch {
                         showError(error)
                     }
-                    if canObserveReset { await observeResetExpiry(profile: account, usage: usage) }
+                    await observeResetExpiry(profile: account, usage: usage)
                 case let .failure(id, message, signInRequired):
                     guard let account = accounts.first(where: { $0.id == id }) else { continue }
-                    if canObserveReset { await observeResetExpiry(profile: account, usage: nil, error: message) }
+                    await observeResetExpiry(profile: account, usage: nil, error: message)
                     if signInRequired {
                         usageCheckedAt[id] = nil
                         usageStates[id] = .signInRequired
