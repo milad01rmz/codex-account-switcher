@@ -92,9 +92,9 @@ open class AccountController {
         usageRefreshTask = Task { [weak self] in
             guard let self else { return }
             await self.performWeeklyUsageRefresh()
+            await self.switchAutomaticallyIfNeeded()
             self.usageRefreshTask = nil
             self.scheduleResetExpiryCheck()
-            await self.switchAutomaticallyIfNeeded()
         }
     }
 
@@ -209,7 +209,7 @@ open class AccountController {
     }
 
     private func switchAutomaticallyIfNeeded() async {
-        guard automaticSwitchEnabled, !isMutating, !isAddingAccount, activeIdentityConfirmed,
+        guard !Task.isCancelled, automaticSwitchEnabled, !isMutating, !isAddingAccount, activeIdentityConfirmed,
               let active = activeAccountID, let service = switchService as? SwitchService else { return }
         let now = Date()
         func capacity(_ id: UUID) -> Int? {

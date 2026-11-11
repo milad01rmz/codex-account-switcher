@@ -29,6 +29,7 @@ on:
       - "scripts/tests/**"
       - ".github/workflows/windows.yml"
   workflow_call:
+  # Allow building a personal Windows binary from a fork without publishing a release.
   workflow_dispatch:
 
 permissions:
