@@ -10,7 +10,7 @@
   </PropertyGroup>
   <ItemGroup>
     <ProjectReference Include="../CodexAccountSwitcher.Core/CodexAccountSwitcher.Core.csproj" />
-    <Resource Include="../../assets/account-switcher-logo.png" Link="logo.png" />
+    <Resource Include="juniprus-logo.png" Link="logo.png" />
     <Resource Include="app.ico" />
     <Resource Include="tray-light.ico" />
     <Resource Include="tray-dark.ico" />
