@@ -104,7 +104,14 @@ public sealed class MainWindow : Window
                 settings.Content = indicator;
             }
             commands.Children.Add(settings);
-            var heading = Pair(Text(T("accounts"), 20, bold: true), commands);
+            var brand = new StackPanel { Orientation = Orientation.Horizontal, VerticalAlignment = VerticalAlignment.Center };
+            brand.Children.Add(new Image {
+                Source = System.Windows.Media.Imaging.BitmapFrame.Create(new Uri(
+                    "pack://application:,,,/Codex-Account-Switcher-windows-x64;component/logo.png")),
+                Width = 40, Height = 40, Margin = new Thickness(0, 0, 8, 0),
+            });
+            brand.Children.Add(Text(T("accounts"), 20, bold: true));
+            var heading = Pair(brand, commands);
             heading.Margin = new Thickness(20, 16, 20, 16); body.Children.Add(heading);
         } else {
             var header = new StackPanel { Orientation = Orientation.Horizontal, Margin = new Thickness(20, 16, 20, 16) };
