@@ -224,9 +224,9 @@ open class AccountController {
             return usage.remainingPercent
         }
         let activeCapacity = capacity(active)
-        guard usageStates[active] == .signInRequired || (activeCapacity.map { $0 <= 5 } ?? false),
+        guard usageStates[active] == .signInRequired || activeCapacity == 0,
               let target = accounts.compactMap({ account -> (UUID, Int)? in
-                  guard account.id != active, let remaining = capacity(account.id), remaining > 5 else { return nil }
+                  guard account.id != active, let remaining = capacity(account.id), remaining > 0 else { return nil }
                   return (account.id, remaining)
               }).max(by: { $0.1 < $1.1 })?.0 else { return }
         isMutating = true
@@ -234,11 +234,11 @@ open class AccountController {
         do {
             try await syncActiveIdentity()
             guard automaticSwitchEnabled, activeAccountID == active else { return }
-            try await service.switchAccount(to: target, onlyWhenDesktopClosed: true)
-            apply(try await store.loadRegistry())
-            await refreshSubscriptionSnapshots()
-        } catch let error as OperationError where error.stage == .closeDesktop {
-            // An open Desktop defers the automatic handoff until a later refresh.
+            if activeCapacity == 0 {
+                await finishAccountSwitch(to: target)
+            } else {
+                await finishAccountSwitch(to: target, onlyWhenDesktopClosed: service)
+            }
         } catch {
             showError(error)
         }
@@ -252,11 +252,24 @@ open class AccountController {
         do {
             try await syncActiveIdentity()
             guard id != activeAccountID else { return }
-            try await switchService.switchAccount(to: id)
+            await finishAccountSwitch(to: id)
+        } catch {
+            showError(error)
+        }
+    }
+
+    private func finishAccountSwitch(to id: UUID, onlyWhenDesktopClosed service: SwitchService? = nil) async {
+        do {
+            if let service {
+                try await service.switchAccount(to: id, onlyWhenDesktopClosed: true)
+            } else {
+                try await switchService.switchAccount(to: id)
+            }
             apply(try await store.loadRegistry())
             await refreshSubscriptionSnapshots()
             activeIdentityConfirmed = true
         } catch let error as OperationError {
+            if service != nil && error.stage == .closeDesktop { return }
             if error.stage == .reopenDesktop {
                 do {
                     apply(try await store.loadRegistry())
